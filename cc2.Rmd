@@ -1,10 +1,10 @@
 ---
-title: "R Notebook"
-output: html_notebook
+title: "CC2"
+output: github_document
 editor_options: 
   chunk_output_type: console
 ---
-
+# Problèmatique: Obtient on le même heatmap que dans l'article en utilisant des ASVs au lieu d'OTUs
 ```{r}
 install.packages("gitcreds")
 library(gitcreds)
@@ -24,6 +24,7 @@ BiocManager::install("BiocStyle")
 BiocManager::install("Rhtslib")
 ```
 
+## On commence par installer et ouvrir les packages nécessaires
 ```{r}
 library("knitr")
 library("BiocStyle")
@@ -88,83 +89,106 @@ sapply(c(.cran_packages, .bioc_packages), require, character.only = TRUE)
 set.seed(100)
 ```
 
+## On identifie la direction dans laquelle se trouve nos fastq
 ```{r}
-mydata <- "/home/rstudio/CC2" # CHANGE to the directory containing the fastq files after unzipping.
+mydata <- "/home/rstudio/CC2"  
 list.files(mydata)
 ```
 
+## On s'assure que les reads forwards et reverses sont dans le même ordre 
 ```{r}
-# Sort ensures forward/reverse reads are in same order
 fnFs <- sort(list.files(mydata, pattern="_1.fastq.gz"))
 fnRs <- sort(list.files(mydata, pattern="_2.fastq.gz"))
-# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
 sampleNames <- sapply(strsplit(fnFs, "_"), `[`, 1)
-# Specify the full path to the fnFs and fnRs
 fnFs <- file.path(mydata, fnFs)
 fnRs <- file.path(mydata, fnRs)
 fnFs[1:3]
 fnRs[1:3]
 ```
 
+## On visualise la qualités de nos reads
 ```{r}
 plotQualityProfile(fnFs[1:2])
 plotQualityProfile(fnRs[1:2])
 ```
 
-
+## On place nos reads filtrés dans une sous-direction
 ```{r}
-filt_path <- file.path(mydata, "filtered") # Place filtered files in filtered/ subdirectory
+filt_path <- file.path(mydata, "filtered") 
 if(!file_test("-d", filt_path)) dir.create(filt_path)
 filtFs <- file.path(filt_path, paste0(sampleNames, "_F_filt.fastq.gz"))
 filtRs <- file.path(filt_path, paste0(sampleNames, "_R_filt.fastq.gz"))
 ```
 
-
+## On coupe et on filtre nos reads afin de ne garder que ceux ayant une qualité supérieur ou égale à 20
 ```{r}
 out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, trimLeft=40, truncLen=c(220,160),
               maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
-              compress=TRUE, multithread=TRUE) # On Windows set multithread=FALSE
+              compress=TRUE, multithread=TRUE) 
 head(out)
 ```
 
+## On déréplique nos reads afin d'avoir que des séquences uniques
 ```{r}
 derepFs <- derepFastq(filtFs, verbose=TRUE)
 derepRs <- derepFastq(filtRs, verbose=TRUE)
-# Name the derep-class objects by the sample names
 names(derepFs) <- sampleNames
 names(derepRs) <- sampleNames
 ```
 
+## On prend en compte les erreurs dues aux étapes de séquençage et PCR
 ```{r}
 errF <- learnErrors(filtFs, multithread=TRUE)
 errR <- learnErrors(filtRs, multithread=TRUE)
 ```
 
+## On visualise les ces derniers
 ```{r}
 plotErrors(errF)
 plotErrors(errR)
 ```
 
+## On créé des ASVs
 ```{r}
 dadaFs <- dada(derepFs, err=errF, multithread=TRUE)
 dadaRs <- dada(derepRs, err=errR, multithread=TRUE)
 ```
 
+## On apparie nos reads
 ```{r}
 mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs)
 ```
 
+## On créé une table contenant les ASVs
 ```{r}
 seqtabAll <- makeSequenceTable(mergers[!grepl("Mock", names(mergers))])
 table(nchar(getSequences(seqtabAll)))
 ```
 
+## On enlève les chimères
 ```{r}
 seqtabNoC <- removeBimeraDenovo(seqtabAll)
 ```
 
+## On assigne une taxonomie en utilisant les banques de données Silva et Greengenes
 ```{r}
 fastaRef <- "./rdp_train_set_16.fa"
 taxTab <- assignTaxonomy(seqtabNoC, refFasta = fastaRef, multithread=TRUE)
 unname(head(taxTab))
 ``` 
+
+## On créé une table regroupant les indices de saisons et la taxonomie
+```{r}
+seqtabNoC<- as.data.frame(seqtabNoC)
+taxTab<-as.data.frame(taxTab)
+rownames(seqtabNoC)<-Met$sample_alias
+colnames(seqtabNoC)<-taxTab$Genus
+```
+
+## On créé un heatmap
+```{r}
+seqtabNoC<- as.matrix(seqtabNoC)
+heatmap(seqtabNoC, scale="column")
+```
+
+# Conclusion: on obtient un heatmap différent de celui de l'article.On remarque que Cold_1b et Cold_1d sont séparés des autres Cold et sont avec les Warm. On a donc pas une séparation distinct des 2 saisons. 
